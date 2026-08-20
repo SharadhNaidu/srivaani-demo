@@ -62,14 +62,43 @@ def process_name(pid):
         return ""
 
 
-def _restore_foreground(hwnd):
+def _nudge_input():
+    """Satisfy Windows' foreground-change rules.
+
+    SetForegroundWindow is refused unless the calling process is already
+    foreground or has just received input. Tapping a harmless key marks this
+    thread as having received input, which lifts the restriction.
+    """
+    if not HAVE_WIN32:
+        return
+    try:
+        VK_MENU = 0x12
+        win32api.keybd_event(VK_MENU, 0, 0, 0)
+        win32api.keybd_event(VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)
+        time.sleep(0.01)
+    except Exception:
+        pass
+
+
+def _restore_foreground(hwnd, attempts=3):
     if not HAVE_WIN32 or not hwnd:
         return False
+    for attempt in range(attempts):
+        if _try_foreground(hwnd, nudge=(attempt > 0)):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _try_foreground(hwnd, nudge=False):
     try:
         if win32gui.IsIconic(hwnd):
             win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
         if win32gui.GetForegroundWindow() == hwnd:
             return True
+
+        if nudge:
+            _nudge_input()
 
         target_thread, _ = win32process.GetWindowThreadProcessId(hwnd)
         current_thread = win32api.GetCurrentThreadId()

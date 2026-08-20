@@ -11,6 +11,7 @@ import numpy as np
 from .config import MODEL_REPO, SAMPLE_RATE
 from .cleanup import clean_hypothesis, word_count
 from . import decoding
+from .translit import to_latin
 from .languages import script_for_code, AUTO
 
 IDLE = "idle"
@@ -80,6 +81,7 @@ class TranscriptionEngine:
         self._queue = queue.Queue()
         self._worker = None
         self._masker = None
+        self._tracker = decoding.LanguageTracker()
         self._stop = threading.Event()
         self._lock = threading.Lock()
 
@@ -266,19 +268,84 @@ class TranscriptionEngine:
             return None
         return script_for_code(code)
 
+    def reset_language_memory(self):
+        self._tracker.reset()
+
+    @property
+    def session_script(self):
+        return self._tracker.session_script
+
     def _transcribe(self, audio):
         import torch
         wav = np.ascontiguousarray(audio, dtype=np.float32)
-        script = self._forced_script()
+        seconds = wav.size / float(SAMPLE_RATE)
+        forced = self._forced_script()
 
-        if script and self._masker is not None:
-            try:
-                with torch.inference_mode():
-                    out = decoding.transcribe(self.model, wav, self._masker, script)
-                return decoding.Hypothesis(out["text"], out["timestamp"])
-            except Exception:
-                traceback.print_exc()
+        if self._masker is None:
+            return self._plain_transcribe(wav)
 
+        script = forced
+        used_prior = False
+        if script is None:
+            prior = self._tracker.prior_for(seconds)
+            if prior is not None:
+                script = prior
+                used_prior = True
+
+        try:
+            with torch.inference_mode():
+                out = decoding.transcribe(self.model, wav, self._masker, script)
+        except Exception:
+            traceback.print_exc()
+            return self._plain_transcribe(wav)
+
+        text = out["text"]
+
+        if script and not str(text).strip():
+            text = self._recover_empty(wav, script)
+
+        detected = decoding.dominant_script(text)
+
+        if forced is None and not used_prior:
+            chosen = self._tracker.observe(detected, seconds,
+                                           len(out.get("tokens") or []))
+            if chosen and chosen != detected:
+                try:
+                    with torch.inference_mode():
+                        out = decoding.transcribe(self.model, wav, self._masker, chosen)
+                    text = out["text"]
+                    detected = decoding.dominant_script(text) or chosen
+                    used_prior = True
+                except Exception:
+                    traceback.print_exc()
+
+        hyp = decoding.Hypothesis(text, out["timestamp"])
+        hyp.script = detected
+        hyp.prior_applied = used_prior
+        return hyp
+
+    def _recover_empty(self, wav, target_script):
+        """A constrained decode can come back empty on very short clips.
+
+        Losing the utterance outright is worse than recovering it, so fall back
+        to a free decode and transliterate if the script came out wrong.
+        """
+        import torch
+        try:
+            with torch.inference_mode():
+                free = decoding.transcribe(self.model, wav, self._masker, None)
+        except Exception:
+            return ""
+        text = free.get("text") or ""
+        if not text.strip():
+            return ""
+        got = decoding.dominant_script(text)
+        if got and got != target_script and target_script == "LATIN":
+            return to_latin(text, got)
+        return text
+
+    def _plain_transcribe(self, wav):
+        import torch
         try:
             with torch.inference_mode():
                 return self.model.transcribe([wav], return_hypotheses=True, timestamps=True)[0]

@@ -59,7 +59,7 @@ This takes 5–15 minutes on a normal connection. It is safe to re-run.
 and then the self-test, which must end with:
 
 ```
-36/36 checks passed
+44/44 checks passed
 ```
 
 The two lines that matter most:
@@ -67,7 +67,7 @@ The two lines that matter most:
 - `[PASS] running on GPU    cuda / fp16` — it is using the GPU, not the CPU.
 - `[PASS] silence produces no text` — the noise gate is working.
 
-If the count is not 36/36, the failing check is named on the last line.
+If the count is not 44/44, the failing check is named on the last line.
 See **Troubleshooting** below.
 
 ### Step 4 — launch
@@ -123,6 +123,11 @@ This is not a cosmetic setting. SraVaani has no language input, so it cannot be
 *told* which language to expect. Instead, selecting a language masks every
 token outside that language's script out of the decoder's vocabulary, so the
 model physically cannot emit another script.
+
+**Auto-detect is sticky across the session.** Long utterances (4 s or more) set
+the session language; short ones inherit it. Changing the session language
+requires two long utterances in a row agreeing, so one odd result cannot flip
+you into the wrong language mid-dictation.
 
 Use it when auto-detect drifts. Speaking English with an Indian accent, for
 example, sometimes lands in Devanagari ("hello" becoming "हेलो"). Selecting
@@ -205,6 +210,18 @@ a full stop.
 mask over the 5000-token vocabulary and applies it to the logits at every
 decoding step, so out-of-script tokens are unreachable.
 
+**Short English utterances used to come out in Hindi, and likelihood scoring
+could not fix it.** Dictating "hello hello hello" produced `हेलो हेलो हेलो`.
+That is not a malfunction: हेलो is the standard Hindi spelling of the loanword,
+and the model prefers Devanagari for it by a wide margin (-0.10 vs -0.52
+log-probability per decoding step). Scoring every script and taking the best
+still picks Hindi, because Hindi genuinely is the better explanation of one
+second of audio. What separates the two is context, not acoustics -- hence the
+sticky session language. Measured on Indian-accented English (Microsoft Heera
+and Ravi voices) across short, very short, noisy and reverberant variants:
+**87.5% correct without session memory, 100% with it.** Reproduce with
+`tests/lid_session.py`.
+
 **The NLP cleanup measurably fixes real errors.** On a five-sentence English
 test set the model scored 0.125 WER — and every single error was a split
 compound: "tomorrow" as "to morrow", "everyone" as "every one", "today" as
@@ -241,8 +258,9 @@ instead. (Right Ctrl is deliberately not the default: on many new laptops it is
 the Copilot key and never reaches this app.)
 
 **English comes out in Hindi script**
-Auto-detect chose Hindi for the utterance. Set the Language dropdown to
-**English** — decoding is then locked to Latin script.
+Dictate one full English sentence first — that sets the session language and
+short utterances then follow it. If it still happens, set the Language dropdown
+to **English**, which locks decoding to Latin script outright.
 
 **Indic text shows as boxes**
 The Nirmala UI font is missing. Windows Settings → Time & Language → Language,
@@ -293,5 +311,7 @@ tests/
     test_live.py         noise, edge cases, cursor targeting
     bench_noise.py       filtered vs unfiltered WER
     bench_policy.py      denoising policy comparison
+    lid_session.py       language detection with session memory
+    lid_stress.py        language detection under degradation
     target_window.py     helper window for the paste test
 ```

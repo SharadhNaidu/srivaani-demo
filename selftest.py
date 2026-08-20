@@ -17,6 +17,8 @@ from sravaani_flow.cleanup import (clean, clean_hypothesis, segment_by_pauses,
                                    sentence_mark_for, script_of)
 from sravaani_flow.config import Settings, SAMPLE_RATE
 from sravaani_flow.engine import READY, FAILED
+from sravaani_flow.decoding import LanguageTracker
+from sravaani_flow.translit import to_latin
 
 PASS, FAIL = "PASS", "FAIL"
 results = []
@@ -70,6 +72,28 @@ def main():
         {"word": "world", "start": 1.6, "end": 2.1},
     ])
     check("pause segmentation", "." in seg, seg)
+
+    tracker = LanguageTracker()
+    check("no language prior before any speech", tracker.prior_for(1.0) is None)
+    tracker.observe("LATIN", 6.0, 12)
+    check("long utterance sets session language",
+          tracker.session_script == "LATIN", tracker.session_script)
+    check("short utterance inherits session language",
+          tracker.prior_for(1.0) == "LATIN", str(tracker.prior_for(1.0)))
+    check("long utterance ignores the prior",
+          tracker.prior_for(9.0) is None)
+    tracker.observe("DEVANAGARI", 6.0, 12)
+    check("one odd result does not flip the session",
+          tracker.session_script == "LATIN", tracker.session_script)
+    tracker.observe("DEVANAGARI", 6.0, 12)
+    check("repeated evidence does switch the session",
+          tracker.session_script == "DEVANAGARI", tracker.session_script)
+    tracker.reset()
+    check("language memory resets", tracker.session_script is None)
+
+    check("transliteration rescues loanwords",
+          to_latin("हेलो हेलो", "DEVANAGARI") == "hello hello",
+          to_latin("हेलो हेलो", "DEVANAGARI"))
 
     check("denoise gentle at moderate SNR",
           denoise_strength_for(10.0, 0.75) == 0.5,
@@ -172,8 +196,12 @@ def main():
         app.settings.set("auto_paste", True)
 
     app.select_tab("Notes")
-    root.update()
-    check("notes tab switches", app._active_tab == "Notes")
+    for _ in range(10):
+        root.update()
+        if app._active_tab == "Notes":
+            break
+        time.sleep(0.02)
+    check("notes tab switches", app._active_tab == "Notes", str(app._active_tab))
 
     app.note.delete("1.0", "end")
     app._append_to_note("first dictated line")

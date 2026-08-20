@@ -869,9 +869,13 @@ class App:
     def _change_language(self, _event=None):
         code = languages.code_for_name(self.language_var.get())
         self.settings.set("language", code)
+        try:
+            self.engine.reset_language_memory()
+        except Exception:
+            pass
         if code == languages.AUTO:
             self.language_note.configure(
-                text="model picks the language per utterance")
+                text="detected per utterance, sticky across the session")
         else:
             script = languages.script_for_code(code)
             self.language_note.configure(
