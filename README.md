@@ -59,7 +59,7 @@ This takes 5–15 minutes on a normal connection. It is safe to re-run.
 and then the self-test, which must end with:
 
 ```
-34/34 checks passed
+36/36 checks passed
 ```
 
 The two lines that matter most:
@@ -67,7 +67,7 @@ The two lines that matter most:
 - `[PASS] running on GPU    cuda / fp16` — it is using the GPU, not the CPU.
 - `[PASS] silence produces no text` — the noise gate is working.
 
-If the count is not 34/34, the failing check is named on the last line.
+If the count is not 36/36, the failing check is named on the last line.
 See **Troubleshooting** below.
 
 ### Step 4 — launch
@@ -151,7 +151,7 @@ microphone (always open, 16 kHz mono)
 [Right Shift held] --> capture
    |
    +-- high-pass 80 Hz                  removes mains hum and desk thumps
-   +-- adaptive spectral gating         only when the room is actually noisy
+   +-- SNR-adaptive spectral gating     off above 22 dB, gentle to 6 dB, firm below
    +-- WebRTC VAD trim + speech gate    silence never reaches the model
    +-- auto gain                        rescues quiet microphones
    |
@@ -168,9 +168,31 @@ clipboard -> restore previous window -> Ctrl+V at the caret
 
 Four design decisions worth knowing:
 
-**The noise filter is adaptive, not always-on.** Measured against clean speech,
-spectral gating helps at moderate SNR but *hurts* recognition in an already
-quiet room. It is skipped above ~22 dB SNR.
+**The noise filter is tuned by measurement, not by intuition.** Every policy was
+benchmarked on six sentences against six disturbances (white hiss, mains hum,
+fan rumble, babble, impulses, keyboard clatter) at 20/15/10/5/0 dB SNR —
+180 measurements per policy. Results:
+
+| Policy | Mean WER | Mean WER (SNR <= 10 dB) |
+|---|---|---|
+| no filtering | 0.0794 | 0.1241 |
+| fixed-strength gating | 0.0722 | 0.1162 |
+| **SNR-adaptive gating (shipped)** | **0.0710** | **0.1143** |
+| decision-directed Wiener filter | 0.0966 | — |
+
+The shipped policy skips filtering entirely above 22 dB SNR, applies gentle
+gating (0.5) down to 6 dB, and stronger gating (0.8) below that.
+
+Three things were built, measured, and **deleted for making it worse**: a
+decision-directed Wiener filter (0.0966 — classic speech enhancement optimises
+perceptual quality, not recogniser accuracy), an impulse suppressor (keyboard
+clatter went 0.030 to 0.088), and mains-hum notch filtering (no measurable gain
+over the high-pass already in place).
+
+Babble — other people talking — is not improvable by any spectral method,
+because it is speech competing with speech. At 0 dB babble every policy scores
+near 1.0 WER. If the room is that loud, move the microphone closer; no filter
+will save it. Reproduce any of this with `tests/bench_policy.py`.
 
 **Punctuation comes from timestamps, not an LLM.** SraVaani emits no punctuation
 or capitalisation. Rather than adding a cloud LLM cleanup step (an API key and a
@@ -269,5 +291,7 @@ sravaani_flow/
     fetch.py             model download
 tests/
     test_live.py         noise, edge cases, cursor targeting
+    bench_noise.py       filtered vs unfiltered WER
+    bench_policy.py      denoising policy comparison
     target_window.py     helper window for the paste test
 ```

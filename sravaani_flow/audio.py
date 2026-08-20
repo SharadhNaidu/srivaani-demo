@@ -41,6 +41,14 @@ def _denoise(x, noise, strength, sr=SAMPLE_RATE):
 
 
 DENOISE_SNR_CEILING = 22.0
+DENOISE_SNR_HARSH = 6.0
+
+
+def denoise_strength_for(snr_db, configured):
+    configured = float(np.clip(configured, 0.0, 1.0))
+    if snr_db >= DENOISE_SNR_HARSH:
+        return min(configured, 0.5)
+    return min(max(configured, 0.8), 1.0)
 
 
 def estimate_snr_db(signal, noise):
@@ -240,8 +248,10 @@ class AudioEngine:
         info["snr_db"] = estimate_snr_db(audio, noise_ref)
         if self.settings.get("denoise", True) and info["snr_db"] < DENOISE_SNR_CEILING:
             before = audio
-            audio = _denoise(audio, noise_ref,
-                             float(self.settings.get("denoise_strength", 0.75)))
+            strength = denoise_strength_for(
+                info["snr_db"], self.settings.get("denoise_strength", 0.75))
+            info["denoise_strength"] = strength
+            audio = _denoise(audio, noise_ref, strength)
             info["denoised"] = audio is not before
 
         trimmed, ratio = trim_to_speech(audio)

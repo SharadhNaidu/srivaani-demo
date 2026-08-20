@@ -11,7 +11,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sravaani_flow import theme
 from sravaani_flow.app import App
-from sravaani_flow.audio import AudioEngine, trim_to_speech, estimate_snr_db
+from sravaani_flow.audio import (AudioEngine, trim_to_speech, estimate_snr_db,
+                                 denoise_strength_for)
 from sravaani_flow.cleanup import (clean, clean_hypothesis, segment_by_pauses,
                                    sentence_mark_for, script_of)
 from sravaani_flow.config import Settings, SAMPLE_RATE
@@ -69,6 +70,13 @@ def main():
         {"word": "world", "start": 1.6, "end": 2.1},
     ])
     check("pause segmentation", "." in seg, seg)
+
+    check("denoise gentle at moderate SNR",
+          denoise_strength_for(10.0, 0.75) == 0.5,
+          "%.2f" % denoise_strength_for(10.0, 0.75))
+    check("denoise stronger at very low SNR",
+          denoise_strength_for(2.0, 0.75) >= 0.8,
+          "%.2f" % denoise_strength_for(2.0, 0.75))
 
     scripts = {
         "Hindi": ("यह यह यह परीक्षण", "यह परीक्षण", "।"),

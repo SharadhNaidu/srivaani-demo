@@ -1,0 +1,1 @@
+Our project uses a deep learning model for speech recognition
