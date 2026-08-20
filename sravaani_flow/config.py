@@ -26,6 +26,7 @@ DEFAULTS = {
     "auto_copy": True,
     "cleanup": True,
     "spoken_punctuation": True,
+    "language": "auto",
     "device": "auto",
     "precision": "fp16",
     "min_record_seconds": 0.35,

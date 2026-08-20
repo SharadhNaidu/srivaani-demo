@@ -133,6 +133,16 @@ def get_clipboard():
             pass
 
 
+def set_clipboard_verified(text, attempts=4):
+    for _ in range(attempts):
+        if set_clipboard(text):
+            time.sleep(0.03)
+            if get_clipboard() == text:
+                return True
+        time.sleep(0.05)
+    return False
+
+
 def set_clipboard(text):
     if not HAVE_WIN32:
         try:
@@ -214,7 +224,7 @@ class Injector:
             return result
 
         if self.settings.get("auto_copy", True):
-            result["copied"] = set_clipboard(text)
+            result["copied"] = set_clipboard_verified(text)
 
         if not self.settings.get("auto_paste", True):
             result["reason"] = "paste_disabled"
@@ -230,7 +240,7 @@ class Injector:
 
         with self._lock:
             previous = get_clipboard() if not result["copied"] else None
-            if not result["copied"] and not set_clipboard(text):
+            if not set_clipboard_verified(text):
                 result["reason"] = "clipboard_failed"
                 return result
 
@@ -239,8 +249,12 @@ class Injector:
                 result["reason"] = "focus_failed"
                 return result
 
-            time.sleep(0.04)
+            time.sleep(0.08)
+            if get_clipboard() != text and not set_clipboard_verified(text):
+                result["reason"] = "clipboard_changed"
+                return result
             result["pasted"] = _send_paste()
+            time.sleep(0.06)
             if not result["pasted"]:
                 result["pasted"] = type_text(text)
                 result["reason"] = "typed_fallback"

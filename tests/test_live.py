@@ -177,7 +177,7 @@ def test_cursor_injection(settings):
         delivered.append(outcome)
         check("paste '%s'" % phrase[:22], outcome.get("pasted"),
               "restored=%s reason=%s" % (outcome.get("restored"), outcome.get("reason") or "-"))
-        time.sleep(0.6)
+        time.sleep(1.1)
 
     time.sleep(1.2)
     content = ""

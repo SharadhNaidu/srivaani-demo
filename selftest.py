@@ -12,7 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sravaani_flow import theme
 from sravaani_flow.app import App
 from sravaani_flow.audio import AudioEngine, trim_to_speech, estimate_snr_db
-from sravaani_flow.cleanup import clean, clean_hypothesis, segment_by_pauses
+from sravaani_flow.cleanup import (clean, clean_hypothesis, segment_by_pauses,
+                                   sentence_mark_for, script_of)
 from sravaani_flow.config import Settings, SAMPLE_RATE
 from sravaani_flow.engine import READY, FAILED
 
@@ -68,6 +69,24 @@ def main():
         {"word": "world", "start": 1.6, "end": 2.1},
     ])
     check("pause segmentation", "." in seg, seg)
+
+    scripts = {
+        "Hindi": ("यह यह यह परीक्षण", "यह परीक्षण", "।"),
+        "Kannada": ("ಇದು ಇದು ಇದು ಪರೀಕ್ಷೆ", "ಇದು ಪರೀಕ್ಷೆ", "."),
+        "Telugu": ("ఇది ఇది ఇది పరీక్ష", "ఇది పరీక్ష", "."),
+        "Tamil": ("இது இது இது சோதனை", "இது சோதனை", "."),
+    }
+    for lang, (noisy, expect, mark) in scripts.items():
+        check("NLP collapses repeats (%s)" % lang, clean(noisy) == expect, clean(noisy))
+        check("sentence mark correct (%s)" % lang,
+              sentence_mark_for(script_of(expect)) == mark,
+              repr(sentence_mark_for(script_of(expect))))
+
+    seg_hi = segment_by_pauses(
+        [{"word": "नमस्ते", "start": 0.0, "end": 1.9},
+         {"word": "है", "start": 1.9, "end": 2.3}],
+        sentence_mark="।")
+    check("Hindi uses danda punctuation", "।" in seg_hi, " | ".join(seg_hi.split()))
 
     root = tk.Tk()
     root.withdraw()
@@ -143,6 +162,39 @@ def main():
             check("real speech transcribed", bool(out.strip()), out[:80])
 
         app.settings.set("auto_paste", True)
+
+    app.select_tab("Notes")
+    root.update()
+    check("notes tab switches", app._active_tab == "Notes")
+
+    app.note.delete("1.0", "end")
+    app._append_to_note("first dictated line")
+    app._append_to_note("ನಮಸ್ಕಾರ ಎರಡನೆಯ ಸಾಲು")
+    root.update()
+    body = app.note.get("1.0", "end-1c")
+    check("notes receive dictation", "first dictated line" in body)
+    check("notes keep Indic text", "ನಮಸ್ಕಾರ" in body)
+    check("notes timestamp each entry", body.count("[") >= 2, repr(body[:44]))
+    check("notes word counter updates",
+          "words" in app.note_counter.cget("text"), app.note_counter.cget("text"))
+
+    app.capture_to_note.set(True)
+    routed = (app.capture_to_note.get() or app._active_tab == "Notes")
+    check("dictation routes into note when tab active", routed)
+
+    tmp = os.path.join(os.environ.get("TEMP", "."), "sravaani_note_test.txt")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(body)
+    with open(tmp, encoding="utf-8") as fh:
+        check("note round-trips through a file", fh.read() == body)
+    try:
+        os.remove(tmp)
+    except Exception:
+        pass
+
+    app.capture_to_note.set(False)
+    app.select_tab("Dictate")
+    root.update()
 
     app.shutdown()
 

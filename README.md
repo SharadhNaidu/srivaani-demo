@@ -59,7 +59,7 @@ This takes 5–15 minutes on a normal connection. It is safe to re-run.
 and then the self-test, which must end with:
 
 ```
-18/18 checks passed
+34/34 checks passed
 ```
 
 The two lines that matter most:
@@ -67,7 +67,7 @@ The two lines that matter most:
 - `[PASS] running on GPU    cuda / fp16` — it is using the GPU, not the CPU.
 - `[PASS] silence produces no text` — the noise gate is working.
 
-If the count is not 18/18, the failing check is named on the last line.
+If the count is not 34/34, the failing check is named on the last line.
 See **Troubleshooting** below.
 
 ### Step 4 — launch
@@ -111,6 +111,27 @@ All four are re-bindable in **Settings → Shortcuts**.
 - **Settings** — microphone, noise filtering, output behaviour, shortcuts, and
   custom vocabulary.
 
+### Language
+
+The **Language** dropdown sits at the top of the Dictate tab.
+
+**Auto-detect is the default.** The model decides the language for each
+utterance on its own. Selecting a language from the dropdown **overrides** that
+and locks decoding to the chosen script.
+
+This is not a cosmetic setting. SraVaani has no language input, so it cannot be
+*told* which language to expect. Instead, selecting a language masks every
+token outside that language's script out of the decoder's vocabulary, so the
+model physically cannot emit another script.
+
+Use it when auto-detect drifts. Speaking English with an Indian accent, for
+example, sometimes lands in Devanagari ("hello" becoming "हेलो"). Selecting
+**English** stops that completely.
+
+Each transcript is tagged with the detected language. If you selected one
+language and a different script comes out, the tag turns black with a `!` to
+flag the mismatch.
+
 ### Custom vocabulary
 
 Settings → Vocabulary. One term per line. This is what fixes domain words —
@@ -134,16 +155,18 @@ microphone (always open, 16 kHz mono)
    +-- WebRTC VAD trim + speech gate    silence never reaches the model
    +-- auto gain                        rescues quiet microphones
    |
-SraVaani-1.0 (TorchScript, fp16, CUDA)
+SraVaani-1.0 (TorchScript, fp16, CUDA)  greedy TDT decode
    |
+   +-- script mask (if a language set)  out-of-script tokens made unreachable
    +-- pause-based punctuation          from the model's own word timestamps
+   +-- compound merge, contractions     "to morrow" -> "tomorrow"
    +-- filler removal, casing           Latin-script text only
    +-- custom vocabulary                domain spellings
    |
 clipboard -> restore previous window -> Ctrl+V at the caret
 ```
 
-Two design decisions worth knowing:
+Four design decisions worth knowing:
 
 **The noise filter is adaptive, not always-on.** Measured against clean speech,
 spectral gating helps at moderate SNR but *hurts* recognition in an already
@@ -152,7 +175,23 @@ quiet room. It is skipped above ~22 dB SNR.
 **Punctuation comes from timestamps, not an LLM.** SraVaani emits no punctuation
 or capitalisation. Rather than adding a cloud LLM cleanup step (an API key and a
 network round-trip — the things that fail during a live demo), sentence breaks
-are inferred from pauses in the model's own word-level timestamps.
+are inferred from pauses in the model's own word-level timestamps. Devanagari,
+Bengali, Gurmukhi, Odia and Gujarati get the danda (।); every other script gets
+a full stop.
+
+**Language selection is enforced in the decoder.** Choosing a language builds a
+mask over the 5000-token vocabulary and applies it to the logits at every
+decoding step, so out-of-script tokens are unreachable.
+
+**The NLP cleanup measurably fixes real errors.** On a five-sentence English
+test set the model scored 0.125 WER — and every single error was a split
+compound: "tomorrow" as "to morrow", "everyone" as "every one", "today" as
+"to day". The model heard the audio correctly and mis-segmented the words.
+Merging split compounds against a known-word list, plus contraction and
+confusion fixes, took that set to **0.000 WER**. Repeat-word collapse and
+whitespace normalisation run for every script; filler removal, casing and
+compound merging apply to Latin text only, since they would corrupt Indic
+output.
 
 ---
 
@@ -179,6 +218,10 @@ Another app has claimed it. Settings → Shortcuts → Hold to talk, and pick F8
 instead. (Right Ctrl is deliberately not the default: on many new laptops it is
 the Copilot key and never reaches this app.)
 
+**English comes out in Hindi script**
+Auto-detect chose Hindi for the utterance. Set the Language dropdown to
+**English** — decoding is then locked to Latin script.
+
 **Indic text shows as boxes**
 The Nirmala UI font is missing. Windows Settings → Time & Language → Language,
 and add the language pack for the script you need.
@@ -192,10 +235,14 @@ and add the language pack for the script you need.
 .venv\Scripts\python.exe tests\test_live.py # 23 checks, ~3 min
 ```
 
-`test_live.py` covers noise robustness (white hiss, mains hum, fan rumble at
-20/10/5 dB), audio edge cases (silence, clipping, DC offset, empty buffers), and
-real cross-process pasting into another window's text field in English, Kannada,
-Hindi and Telugu.
+`selftest.py` covers the audio gate, the NLP cleanup in Hindi, Kannada, Telugu
+and Tamil, the UI, and the Notes workspace. `test_live.py` covers noise
+robustness (white hiss, mains hum, fan rumble at 20/10/5 dB), audio edge cases
+(silence, clipping, DC offset, empty buffers), and real cross-process pasting
+into another window's text field in English, Kannada, Hindi and Telugu.
+
+Do not type or click while `test_live.py` runs — it takes over the keyboard
+focus to test pasting, and stray keystrokes land in the test's target window.
 
 ---
 
@@ -210,7 +257,9 @@ sravaani_flow/
     app.py               UI and controller
     engine.py            model loading, worker thread, junk gate
     audio.py             capture, noise filtering, VAD
-    cleanup.py           punctuation, fillers, vocabulary
+    cleanup.py           punctuation, fillers, compounds, vocabulary
+    decoding.py          script-masked greedy decoding
+    translit.py          Devanagari to Latin fallback
     inject.py            focus capture, restore, paste at caret
     hotkeys.py           global shortcuts
     overlay.py           floating recording pill

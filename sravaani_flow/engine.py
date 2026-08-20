@@ -10,6 +10,8 @@ import numpy as np
 
 from .config import MODEL_REPO, SAMPLE_RATE
 from .cleanup import clean_hypothesis, word_count
+from . import decoding
+from .languages import script_for_code, AUTO
 
 IDLE = "idle"
 LOADING = "loading"
@@ -77,6 +79,7 @@ class TranscriptionEngine:
         self.last_rtf = 0.0
         self._queue = queue.Queue()
         self._worker = None
+        self._masker = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
 
@@ -155,6 +158,14 @@ class TranscriptionEngine:
                 want_fp16 = False
             else:
                 raise
+
+        try:
+            sp = model._get_tokenizer()
+            self._masker = decoding.ScriptMasker(
+                sp, model.config.vocab_size, model.config.blank_id,
+                model._anchor.device)
+        except Exception:
+            self._masker = None
 
         self.model = model
         self.device = device
@@ -249,9 +260,25 @@ class TranscriptionEngine:
             return True
         return False
 
+    def _forced_script(self):
+        code = str(self.settings.get("language", AUTO) or AUTO)
+        if code == AUTO:
+            return None
+        return script_for_code(code)
+
     def _transcribe(self, audio):
         import torch
         wav = np.ascontiguousarray(audio, dtype=np.float32)
+        script = self._forced_script()
+
+        if script and self._masker is not None:
+            try:
+                with torch.inference_mode():
+                    out = decoding.transcribe(self.model, wav, self._masker, script)
+                return decoding.Hypothesis(out["text"], out["timestamp"])
+            except Exception:
+                traceback.print_exc()
+
         try:
             with torch.inference_mode():
                 return self.model.transcribe([wav], return_hypotheses=True, timestamps=True)[0]

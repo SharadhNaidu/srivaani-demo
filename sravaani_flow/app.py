@@ -14,6 +14,7 @@ from .config import Settings, HISTORY_PATH
 from .engine import TranscriptionEngine, READY, LOADING, FAILED, BUSY
 from .hotkeys import HotkeyManager, label_for
 from .inject import Injector, capture_focus, set_clipboard
+from . import languages
 from .overlay import Overlay
 
 TYPING_WPM = 40.0
@@ -180,10 +181,32 @@ class App:
 
     def _build_dictate_tab(self, tab):
 
+        langbar = ttk.Frame(tab, style="TFrame")
+        langbar.pack(fill="x", pady=(theme.GAP, 8))
+        tk.Label(langbar, text="LANGUAGE", bg=theme.BG, fg=theme.MUTED,
+                 font=(theme.FONT_UI, 10, "bold")).pack(side="left", padx=(0, 10))
+
+        self.language_var = tk.StringVar(
+            value=languages.name_for_code(self.settings.get("language", languages.AUTO)))
+        self.language_box = ttk.Combobox(
+            langbar, textvariable=self.language_var,
+            values=languages.display_names(), state="readonly", width=26)
+        self.language_box.pack(side="left")
+        self.language_box.bind("<<ComboboxSelected>>", self._change_language)
+
+        self.language_note = tk.Label(
+            langbar, text="", bg=theme.BG, fg=theme.MUTED,
+            font=(theme.FONT_UI, 10))
+        self.language_note.pack(side="left", padx=(12, 0))
+
         bar = ttk.Frame(tab, style="TFrame")
-        bar.pack(fill="x", pady=(theme.GAP, 6))
+        bar.pack(fill="x", pady=(0, 6))
         tk.Label(bar, text="LATEST TRANSCRIPT", bg=theme.BG, fg=theme.MUTED,
                  font=(theme.FONT_UI, 10, "bold")).pack(side="left")
+        self.detected_badge = tk.Label(bar, text="", bg=theme.SURFACE_ALT,
+                                       fg=theme.FG_SOFT,
+                                       font=(theme.FONT_MONO, 9, "bold"),
+                                       padx=9, pady=3)
         self.hint_label = tk.Label(bar, text="", bg=theme.BG, fg=theme.MUTED,
                                    font=(theme.FONT_UI, 10))
         self.hint_label.pack(side="right")
@@ -616,6 +639,7 @@ class App:
         self.overlay.hide()
         self._last_text = result.text
         self._show_transcript(result)
+        self._update_detected_badge(result.text)
         self._record_stats(result)
 
         entry = {"time": time.time(), "text": result.text, "raw": result.raw,
@@ -841,6 +865,35 @@ class App:
             self._set_status("Ready", "microphone switched")
         except AudioError as exc:
             messagebox.showerror("Microphone", str(exc))
+
+    def _change_language(self, _event=None):
+        code = languages.code_for_name(self.language_var.get())
+        self.settings.set("language", code)
+        if code == languages.AUTO:
+            self.language_note.configure(
+                text="model picks the language per utterance")
+        else:
+            script = languages.script_for_code(code)
+            self.language_note.configure(
+                text="decoding locked to %s script" % languages.script_label(script))
+        self._set_status("Ready", "language: %s" % self.language_var.get())
+
+    def _update_detected_badge(self, text):
+        code = self.settings.get("language", languages.AUTO)
+        info = languages.describe(text, code)
+        if not info.get("language"):
+            self.detected_badge.pack_forget()
+            return
+        label = info["language"].upper()
+        if info.get("mismatch"):
+            label = "! " + label
+            self.detected_badge.configure(bg=theme.INK, fg=theme.ON_INK)
+        else:
+            self.detected_badge.configure(bg=theme.SURFACE_ALT, fg=theme.FG_SOFT)
+        self.detected_badge.configure(text=label)
+        self.detected_badge.pack(side="left", padx=(12, 0))
+        if info.get("note"):
+            self.language_note.configure(text=info["note"])
 
     def _change_hotkey(self, key, choices, var):
         labels = [label_for(c) for c in choices]
