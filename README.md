@@ -45,6 +45,16 @@ downloads the model, and finishes by running the self-test.
 
 This takes 5–15 minutes on a normal connection. It is safe to re-run.
 
+Every dependency is pinned to an exact version in `requirements.txt`, and
+PyTorch is pinned to `2.6.0+cu124`, so a machine set up next month gets
+byte-identical versions to the one this was built and tested on. A fresh
+virtual environment built from those pins was verified to pass all 44 checks.
+
+> Do **not** run `pip install -r requirements.txt` on its own. PyTorch is
+> deliberately not listed there — `setup.bat` installs it from NVIDIA's CUDA
+> wheel index first. Installing it from PyPI instead gives you the CPU build,
+> and the GPU is silently lost.
+
 ### Step 3 — confirm it worked
 
 `setup.bat` prints a confirmation at each stage. You should see all of these:
@@ -241,7 +251,16 @@ You have not accepted the terms, or `.env` has a bad token. Redo Step 1.
 
 **`running on GPU` fails, shows `cpu / fp32`**
 `nvidia-smi` was not found during setup, so the CPU build of PyTorch was
-installed. Delete the `.venv` folder and re-run `setup.bat`.
+installed. Check that `nvidia-smi` runs in a terminal (if not, install the
+NVIDIA driver), then delete the `.venv` folder and re-run `setup.bat`.
+
+**`ImportError` mentioning win32 / pywin32**
+Some systems need the pywin32 post-install step. Run:
+`.venv\Scripts\python.exe .venv\Scripts\pywin32_postinstall.py -install`
+
+**CUDA errors on an older machine**
+The pinned CUDA 12.4 build needs NVIDIA driver 527.41 or newer on Windows.
+Update the driver, or set Settings → Compute → `cpu` to run without the GPU.
 
 **Text is copied but not pasted into the other app**
 Windows refused the focus change. The transcript is still on your clipboard —
