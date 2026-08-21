@@ -100,7 +100,7 @@ def main():
     wer_dir = os.path.join(ROOT, "tests", "audio")
     files = sorted(glob.glob(os.path.join(wer_dir, "*.wav")))
     if not files:
-        print("no test audio in tests/audio - run tests/make_audio.py first")
+        print("no test audio found in tests/audio")
         return 1
 
     model = AutoModel.from_pretrained(MODEL_REPO, trust_remote_code=True,

@@ -160,6 +160,7 @@ class TranscriptionEngine:
 
         model = None
         last = None
+        primary_error = None
         for repo in MODEL_REPOS:
             kwargs = dict(trust_remote_code=True, dtype=dtype)
             if token and repo == UPSTREAM_REPO:
@@ -177,8 +178,10 @@ class TranscriptionEngine:
                     last = exc
             except Exception as exc:
                 last = exc
+            if primary_error is None and repo == MODEL_REPOS[0]:
+                primary_error = last
         if model is None:
-            raise last or RuntimeError("could not load the model")
+            raise primary_error or last or RuntimeError("could not load the model")
 
         model = model.to(device).eval()
 

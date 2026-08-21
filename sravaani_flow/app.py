@@ -65,7 +65,6 @@ class App:
         r = self.root
         r.title("SraVaani Flow")
         r.configure(bg=theme.BG)
-        r.minsize(1180, 760)
         self._fit_window(1360, 880)
 
         outer = ttk.Frame(r, style="TFrame")
@@ -144,15 +143,23 @@ class App:
                 page.pack_forget()
 
     def _fit_window(self, want_w, want_h):
+        """Size the window to the screen, never larger than it.
+
+        minsize must be computed from the screen too: a fixed floor bigger
+        than a 1366x768 laptop display puts the bottom of the window off
+        the screen where it cannot be reached.
+        """
         try:
             sw = self.root.winfo_screenwidth()
             sh = self.root.winfo_screenheight()
-            w = max(min(want_w, sw - 80), 900)
-            h = max(min(want_h, sh - 120), 640)
+            w = min(want_w, max(sw - 80, 640))
+            h = min(want_h, max(sh - 120, 480))
+            self.root.minsize(min(940, w), min(620, h))
             x = max((sw - w) // 2, 0)
             y = max((sh - h) // 3, 0)
             self.root.geometry("%dx%d+%d+%d" % (w, h, x, y))
         except Exception:
+            self.root.minsize(640, 480)
             self.root.geometry("%dx%d" % (want_w, want_h))
 
     def _build_header(self, parent):

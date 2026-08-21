@@ -30,6 +30,12 @@ def check(name, ok, detail=""):
     return ok
 
 
+def soft(name, ok, detail=""):
+    """A condition that depends on the machine, not on the code being right."""
+    print("[%s] %-42s %s" % (PASS if ok else "warn", name, detail))
+    return ok
+
+
 def tone_speech(seconds=2.0):
     t = np.linspace(0, seconds, int(SAMPLE_RATE * seconds), dtype=np.float32)
     env = (np.abs(np.sin(2 * np.pi * 2.5 * t)) > 0.35).astype(np.float32)
@@ -47,7 +53,7 @@ def main():
     check("settings load", isinstance(Settings().as_dict(), dict))
 
     devices = AudioEngine.list_devices()
-    check("input devices found", len(devices) > 0, "%d devices" % len(devices))
+    soft("input devices found", len(devices) > 0, "%d devices" % len(devices))
 
     silence = np.zeros(SAMPLE_RATE * 2, dtype=np.float32)
     _, ratio = trim_to_speech(silence)
@@ -135,8 +141,8 @@ def main():
     check("overlay created", app.overlay.win is not None)
     check("hotkeys listening", app.hotkeys.running,
           app.hotkeys.last_error or "ok")
-    check("audio stream running", app.audio.running,
-          app.audio.last_error or "ok")
+    soft("audio stream running", app.audio.running,
+         app.audio.last_error or "ok")
 
     print("\nwaiting for model to load…")
     deadline = time.time() + 180
@@ -149,8 +155,8 @@ def main():
           "%s %s" % (app.engine.status, app.engine.detail))
 
     if app.engine.status == READY:
-        check("running on GPU", app.engine.device == "cuda",
-              "%s / %s" % (app.engine.device, app.engine.precision))
+        soft("running on GPU", app.engine.device == "cuda",
+             "%s / %s" % (app.engine.device, app.engine.precision))
 
         got = {}
         original = app._apply_result
