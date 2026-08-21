@@ -8,7 +8,7 @@ import traceback
 
 import numpy as np
 
-from .config import MODEL_REPO, SAMPLE_RATE
+from .config import MODEL_REPOS, UPSTREAM_REPO, SAMPLE_RATE
 from .cleanup import clean_hypothesis, word_count
 from . import decoding
 from .translit import to_latin
@@ -42,6 +42,27 @@ class Result:
     @property
     def ok(self):
         return self.error is None and bool(self.text)
+
+
+def cuda_usable():
+    """True only when a GPU is genuinely usable.
+
+    torch.cuda.is_available() can report True while device_count() is 0 --
+    switchable graphics, a driver problem, or CUDA_VISIBLE_DEVICES being
+    empty. Trusting it alone makes the model load onto a device that is not
+    there, which fails deep inside TorchScript deserialisation.
+    """
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return False
+        if torch.cuda.device_count() < 1:
+            return False
+        torch.cuda.get_device_name(0)
+        torch.zeros(1).cuda()
+        return True
+    except Exception:
+        return False
 
 
 def resolve_token():
@@ -112,11 +133,10 @@ class TranscriptionEngine:
         return self._queue.qsize()
 
     def _pick_device(self):
-        import torch
         want = str(self.settings.get("device", "auto")).lower()
         if want == "cpu":
             return "cpu"
-        if torch.cuda.is_available():
+        if cuda_usable():
             return "cuda"
         if want == "cuda":
             self._set_status(LOADING, "CUDA requested but unavailable; using CPU")
@@ -138,15 +158,27 @@ class TranscriptionEngine:
         self._set_status(LOADING, "Loading SraVaani-1.0 on %s" % device.upper())
         started = time.time()
 
-        kwargs = dict(trust_remote_code=True, dtype=dtype)
-        if token:
-            kwargs["token"] = token
-        try:
-            model = AutoModel.from_pretrained(MODEL_REPO, **kwargs)
-        except TypeError:
-            kwargs.pop("dtype", None)
-            kwargs["torch_dtype"] = dtype
-            model = AutoModel.from_pretrained(MODEL_REPO, **kwargs)
+        model = None
+        last = None
+        for repo in MODEL_REPOS:
+            kwargs = dict(trust_remote_code=True, dtype=dtype)
+            if token and repo == UPSTREAM_REPO:
+                kwargs["token"] = token
+            try:
+                model = AutoModel.from_pretrained(repo, **kwargs)
+                break
+            except TypeError:
+                kwargs.pop("dtype", None)
+                kwargs["torch_dtype"] = dtype
+                try:
+                    model = AutoModel.from_pretrained(repo, **kwargs)
+                    break
+                except Exception as exc:
+                    last = exc
+            except Exception as exc:
+                last = exc
+        if model is None:
+            raise last or RuntimeError("could not load the model")
 
         model = model.to(device).eval()
 
@@ -201,8 +233,8 @@ class TranscriptionEngine:
         text = str(exc)
         low = text.lower()
         if "401" in text or "403" in text or "gated" in low or "authoriz" in low:
-            return ("Access denied by Hugging Face. Accept the model terms at "
-                    "huggingface.co/ARTPARK-IISc/SraVaani-1.0 and check HF_PAT in .env")
+            return ("Hugging Face refused the download. The model is normally "
+                    "public and needs no account; check your internet connection.")
         if "connect" in low or "resolve" in low or "network" in low or "timeout" in low:
             return "Network unavailable and the model is not cached yet."
         if "out of memory" in low:

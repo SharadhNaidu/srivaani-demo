@@ -9,7 +9,9 @@ APP_DIR = Path(__file__).resolve().parent.parent
 SETTINGS_PATH = APP_DIR / "settings.json"
 HISTORY_PATH = APP_DIR / "history.jsonl"
 
-MODEL_REPO = "ARTPARK-IISc/SraVaani-1.0"
+MODEL_REPO = "SharadhNaiduTrains/sravaani-flow-model"
+UPSTREAM_REPO = "ARTPARK-IISc/SraVaani-1.0"
+MODEL_REPOS = (MODEL_REPO, UPSTREAM_REPO)
 SAMPLE_RATE = 16000
 
 DEFAULTS = {

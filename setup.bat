@@ -2,122 +2,136 @@
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-echo ============================================================
-echo  SraVaani Flow - setup
-echo ============================================================
+echo.
+echo ================================================================
+echo   SraVaani Flow - setup
+echo ================================================================
+echo.
+echo   this installs everything and downloads the speech model.
+echo   no account, no login, no token needed.
+echo   it takes 5-15 minutes the first time. safe to re-run.
 echo.
 
+rem ---------------------------------------------------------------- python
 set "PY="
 for %%V in (3.12 3.11 3.10) do (
     if not defined PY (
         py -%%V -c "import sys" >nul 2>&1
-        if !errorlevel! equ 0 (
-            set "PY=py -%%V"
-            echo [ok] Found Python %%V
+        if !errorlevel! equ 0 set "PY=py -%%V"
+    )
+)
+if not defined PY (
+    for %%C in (python python3) do (
+        if not defined PY (
+            %%C -c "import sys; sys.exit(0 if (3,10)<=sys.version_info[:2]<(3,13) else 1)" >nul 2>&1
+            if !errorlevel! equ 0 set "PY=%%C"
         )
     )
 )
 
 if not defined PY (
-    python -c "import sys; sys.exit(0 if (3,10)<=sys.version_info<(3,13) else 1)" >nul 2>&1
+    echo   [FAIL] no suitable python found.
+    echo.
+    python --version 2>nul
     if !errorlevel! equ 0 (
-        set "PY=python"
-        echo [ok] Using python from PATH
+        echo   you have python installed, but this project needs 3.10, 3.11 or 3.12.
+        echo   pytorch does not publish wheels for 3.13 or newer yet.
     )
-)
-
-if not defined PY (
-    echo [!!] Python 3.10, 3.11 or 3.12 is required.
-    echo      PyTorch does not publish wheels for 3.13+ yet.
-    echo      Install from https://www.python.org/downloads/
-    echo      During install, tick "Add python.exe to PATH".
+    echo.
+    echo   install python 3.12 from:
+    echo       https://www.python.org/downloads/release/python-3128/
+    echo   during install, tick "Add python.exe to PATH", then run setup.bat again.
+    echo.
     pause
     exit /b 1
 )
+for /f "tokens=*" %%G in ('%PY% -c "import sys;print(sys.version.split()[0])"') do set "PYVER=%%G"
+echo   [ok]   python !PYVER!
 
-if not exist ".venv" (
-    echo [..] Creating virtual environment
+rem ---------------------------------------------------------------- venv
+if not exist ".venv\Scripts\python.exe" (
+    echo   [..]   creating virtual environment
     %PY% -m venv .venv
-    if errorlevel 1 goto fail
+    if errorlevel 1 (
+        echo   [FAIL] could not create the virtual environment.
+        pause
+        exit /b 1
+    )
 )
 set "VPY=.venv\Scripts\python.exe"
+echo   [ok]   virtual environment ready
 
-echo [..] Upgrading pip
-"%VPY%" -m pip install --upgrade pip --quiet
+rem ---------------------------------------------------------------- network
+"%VPY%" -c "import urllib.request;urllib.request.urlopen('https://huggingface.co',timeout=15)" >nul 2>&1
+if errorlevel 1 (
+    echo   [FAIL] cannot reach huggingface.co
+    echo          check your internet connection and run setup.bat again.
+    pause
+    exit /b 1
+)
+echo   [ok]   internet reachable
 
+echo   [..]   upgrading pip
+"%VPY%" -m pip install --upgrade pip --quiet --disable-pip-version-check
+
+rem ---------------------------------------------------------------- torch
 echo.
-echo [..] Checking for an NVIDIA GPU
+echo   looking for an nvidia gpu...
+set "HASGPU="
 nvidia-smi >nul 2>&1
-if %errorlevel% equ 0 (
-    for /f "tokens=*" %%G in ('nvidia-smi --query-gpu^=name --format^=csv^,noheader 2^>nul') do (
-        echo [ok] Found: %%G
+if %errorlevel% equ 0 set "HASGPU=1"
+
+if defined HASGPU (
+    for /f "tokens=*" %%G in ('nvidia-smi --query-gpu^=name --format^=csv^,noheader 2^>nul') do echo   [ok]   found %%G
+    echo   [..]   installing pytorch 2.6.0 with cuda 12.4  ^(about 2.5 GB^)
+    "%VPY%" -m pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124 --disable-pip-version-check
+    if errorlevel 1 (
+        echo   [!!]   cuda install failed - falling back to the cpu build
+        "%VPY%" -m pip install torch==2.6.0 --disable-pip-version-check
     )
-    echo [..] Installing PyTorch 2.6.0 with CUDA 12.4
-    "%VPY%" -m pip install torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124
 ) else (
-    echo [!!] No NVIDIA GPU detected - installing the CPU build.
-    echo      The app will still work, but transcription will be slower.
-    "%VPY%" -m pip install torch==2.6.0
+    echo   [ok]   no nvidia gpu - installing the cpu build ^(about 250 MB^)
+    echo          this is fine: on cpu it still runs ~10x faster than real time.
+    "%VPY%" -m pip install torch==2.6.0 --disable-pip-version-check
 )
-if errorlevel 1 goto fail
-
-echo.
-echo [..] Installing the remaining pinned dependencies
-"%VPY%" -m pip install -r requirements.txt
-if errorlevel 1 goto fail
-
-echo.
-echo [..] Verifying the install
-"%VPY%" -c "import torch, transformers, sentencepiece, sounddevice, soundfile, scipy, numpy, noisereduce, webrtcvad, pynput, pyperclip, win32api; print('[ok] all imports fine')"
 if errorlevel 1 (
-    echo [!!] An import failed. If it was a pywin32 error, run:
-    echo        .venv\Scripts\python.exe .venv\Scripts\pywin32_postinstall.py -install
-    goto fail
-)
-
-"%VPY%" -c "import torch; ok=torch.cuda.is_available(); print('[ok] torch',torch.__version__,('CUDA '+torch.cuda.get_device_name(0)) if ok else 'CPU only')"
-
-if not exist ".env" (
-    echo.
-    echo ============================================================
-    echo  [!!] No .env file found - the model download needs one.
-    echo.
-    echo   1. Open https://huggingface.co/ARTPARK-IISc/SraVaani-1.0
-    echo      sign in, and accept the model terms.
-    echo   2. Create a READ token at
-    echo      https://huggingface.co/settings/tokens
-    echo   3. Create a file called .env next to this script with:
-    echo          HF_PAT = "hf_your_token_here"
-    echo   4. Run setup.bat again.
-    echo ============================================================
+    echo   [FAIL] could not install pytorch.
     pause
     exit /b 1
 )
 
+rem ---------------------------------------------------------------- deps
 echo.
-echo [..] Downloading the SraVaani-1.0 model ^(about 900 MB, one time^)
+echo   [..]   installing the remaining dependencies
+"%VPY%" -m pip install -r requirements.txt --disable-pip-version-check
+if errorlevel 1 (
+    echo   [FAIL] could not install the dependencies.
+    pause
+    exit /b 1
+)
+
+rem ---------------------------------------------------------------- model
+echo.
+echo   [..]   downloading the speech model ^(about 870 MB, one time^)
 "%VPY%" -m sravaani_flow.fetch
-if errorlevel 1 goto fail
+if errorlevel 1 (
+    echo   [FAIL] the model download did not finish.
+    echo          re-run setup.bat - it resumes where it left off.
+    pause
+    exit /b 1
+)
 
-echo.
-echo [..] Running the self-test
-"%VPY%" selftest.py
+rem ---------------------------------------------------------------- verify
+"%VPY%" verify.py
 if errorlevel 1 (
     echo.
-    echo [!!] Self-test reported failures - see the named check above.
+    echo   setup did not complete. see the [FAIL] lines above.
     pause
     exit /b 1
 )
 
 echo.
-echo ============================================================
-echo  Setup complete. Launch with run.bat
-echo ============================================================
+echo   start the app with:  run.bat
+echo.
 pause
 exit /b 0
-
-:fail
-echo.
-echo [!!] Setup failed. See the messages above.
-pause
-exit /b 1
